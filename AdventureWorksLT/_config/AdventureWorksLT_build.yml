@@ -1,0 +1,71 @@
+# trigger pipeline only on changes to main branch under the Galaxy dir
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - AdventureWorksLT
+    exclude:
+      - AdventureWorksLT/_docs
+      - AdventureWorksLT/_config
+
+stages:
+- stage: CI
+  displayName: 'Continuous Integration'
+  pool:
+    vmImage: windows-2019
+  jobs:
+  - job: Build
+
+    steps:
+    - task: VSBuild@1
+      inputs:
+        solution: 'AdventureWorksLT/AdventureWorksLT.sqlproj'
+        vsVersion: '16.0'
+        platform: 'Any CPU'
+        configuration: 'Debug'
+        clean: true
+
+    - task: CopyFiles@1
+      inputs:
+        SourceFolder: '$(build.sourcesdirectory)'
+        Contents: |
+          **\bin\Output\AdventureWorksLT.dacpac
+          **\bin\Output\**\AdventureWorksLT.publish.xml
+        TargetFolder: '$(build.artifactstagingdirectory)'
+        flattenFolders: true
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'dacpac'
+        publishLocation: 'Container'
+
+- stage: Deploy
+  displayName: 'Deploy to Azure'
+  dependsOn: CI
+  pool:
+    vmImage: windows-2019
+  jobs:
+  - job: Deploy
+    steps:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        buildType: 'current'
+        artifactName: 'dacpac'
+        targetPath: '$(Pipeline.Workspace)'
+    - task: SqlAzureDacpacDeployment@1
+      inputs:
+        azureSubscription: '$(AzureSubscription)'
+        AuthenticationType: 'server'
+        ServerName: '$(AzureConnectionString)'
+        DatabaseName: 'AdventureWorksLT'
+        SqlUsername: 'svcAdventureWorksAdmin'
+        SqlPassword: '$(AdventureWorksAdminPW)'
+        deployType: 'DacpacTask'
+        DeploymentAction: 'Publish'
+        DacpacFile: '$(Pipeline.Workspace)/AdventureWorksLT.dacpac'
+        PublishProfile: '$(Pipeline.Workspace)/AdventureWorksLT.publish.xml'
+        IpDetectionMethod: 'AutoDetect'
+        DeleteFirewallRule: false
